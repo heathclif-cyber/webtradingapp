@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(docker --version)",
+      "Bash(pg_ctl --version)",
+      "Bash(pip --version)",
+      "Bash(pip3 --version)",
+      "Bash(xargs -I{} du -sh {})"
+    ]
+  }
+}

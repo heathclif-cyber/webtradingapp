@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+html,
+body {
+  background-color: #09090f;
+  color: #e8eaf6;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f0f1a;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e30;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2a44;
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-card border border-bg-border rounded-xl p-4;
+  }
+
+  .badge-long {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-accent-green/10 text-accent-green border border-accent-green/20;
+  }
+
+  .badge-short {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-accent-red/10 text-accent-red border border-accent-red/20;
+  }
+
+  .badge-flat {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-accent-neutral/10 text-text-muted border border-accent-neutral/20;
+  }
+
+  .score-bar-green {
+    @apply bg-accent-green/20 border border-accent-green/30;
+  }
+  .score-bar-red {
+    @apply bg-accent-red/20 border border-accent-red/30;
+  }
+  .score-bar-neutral {
+    @apply bg-bg-border;
+  }
+}
