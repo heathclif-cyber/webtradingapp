@@ -67,3 +67,33 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Deploy ke Railway
+
+**1. Buat 2 Service di Railway**
+Buka https://railway.app → New Project → Deploy from GitHub repo
+
+**Service 1 — Backend:**
+- Source: repo Anda
+- Root Directory: `/backend`
+- Railway otomatis deteksi `railway.json`
+
+**Service 2 — Frontend:**
+- Tambah service baru di project yang sama
+- Source: repo yang sama
+- Root Directory: `/frontend`
+
+**2. Set Environment Variables**
+
+**Backend service** → Settings → Variables → tambahkan:
+- `DATABASE_URL`: `postgresql+asyncpg://neondb_owner:...@neon.tech/neondb?ssl=require`
+- `MODELS_DIR`: `../models`
+- `ACTIVE_MODEL_VERSION`: `ensemble_v2`
+- `CORS_ORIGINS`: `["https://URL-FRONTEND-RAILWAY.up.railway.app","http://localhost:3000"]`
+- `TELEGRAM_TOKEN`: (opsional)
+- `TELEGRAM_CHAT_ID`: (opsional)
+
+**Frontend service** → Variables:
+- `NEXT_PUBLIC_API_URL`: `https://URL-BACKEND-RAILWAY.up.railway.app`
+
+_Catatan:_ URL Railway bisa dilihat setelah deploy pertama selesai — lalu update `CORS_ORIGINS` di backend dan `NEXT_PUBLIC_API_URL` di frontend. File model (`.pkl`, `.pt`) ikut di-push ke Git karena aman ukurannya (~11MB).
