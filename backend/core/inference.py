@@ -53,13 +53,14 @@ class LSTMClassifier(nn.Module):
 class _Assets:
     """All model files loaded once, shared across mode switches."""
 
-    def __init__(self, models_dir: Path, cfg: dict):
+    def __init__(self, models_dir: Path, cfg: dict, skip_lstm: bool = False):
         arch = cfg["model_architecture"]
         inf  = cfg["inference"]
 
-        self.seq_len     = inf["seq_len"]          # 32
-        self.n_features  = arch["n_features"]      # 85
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.seq_len     = inf["seq_len"]
+        self.n_features  = arch["n_features"]
+        self.device = torch.device("cpu")
+        self.lstm = None
 
         # Feature names
         feat_path = models_dir / cfg["model_files"]["features"]
@@ -68,9 +69,7 @@ class _Assets:
         # SHAP ranking
         shap_path = models_dir / "shap_ranking.json"
         raw_shap = json.loads(shap_path.read_text()) if shap_path.exists() else {}
-        # Normalise to {coin: [{feature, importance}, ...]}
         if raw_shap and "ranking" in raw_shap:
-            # Single-coin format {"symbol": "...", "ranking": [...]}
             symbol = raw_shap.get("symbol", "GLOBAL")
             self.shap_ranking = {
                 symbol: [{"feature": r["feature"], "importance": r["mean_abs_shap"]}
@@ -83,38 +82,31 @@ class _Assets:
         with open(models_dir / cfg["model_files"]["lgbm"], "rb") as f:
             self.lgbm = pickle.load(f)
 
-        # Scaler (fitted for LSTM input)
+        # Scaler, meta-learner, calibrator
         with open(models_dir / cfg["model_files"]["scaler"], "rb") as f:
             self.scaler = pickle.load(f)
-
-        # Ensemble meta-learner (stacking: 6 probs → 3 classes)
         with open(models_dir / cfg["model_files"]["meta"], "rb") as f:
             self.meta = pickle.load(f)
-
-        # Calibrator
         with open(models_dir / cfg["model_files"]["calibrator"], "rb") as f:
             self.calibrator = pickle.load(f)
 
-        # LSTM
-        self.lstm = LSTMClassifier(
-            input_size=arch["n_features"],
-            hidden_size=arch["lstm_hidden"],
-            num_layers=arch["lstm_layers"],
-            dropout=arch["lstm_dropout"],
-        )
-        state = torch.load(
-            models_dir / cfg["model_files"]["lstm"],
-            map_location="cpu",
-            weights_only=True,
-        )
-        self.lstm.load_state_dict(state)
-        self.lstm.to(self.device)
-        self.lstm.eval()
+        # LSTM — skip when running lgbm_only to save memory
+        if not skip_lstm:
+            self.lstm = LSTMClassifier(
+                input_size=arch["n_features"],
+                hidden_size=arch["lstm_hidden"],
+                num_layers=arch["lstm_layers"],
+                dropout=arch["lstm_dropout"],
+            )
+            state = torch.load(
+                models_dir / cfg["model_files"]["lstm"],
+                map_location="cpu",
+                weights_only=True,
+            )
+            self.lstm.load_state_dict(state)
+            self.lstm.eval()
 
-        logger.info(
-            f"Assets loaded: {self.n_features} features, seq_len={self.seq_len}, "
-            f"device={self.device}"
-        )
+        logger.info(f"Assets loaded: {self.n_features} features, skip_lstm={skip_lstm}")
 
 
 # ── Model Manager ─────────────────────────────────────────────────────────────
@@ -150,7 +142,8 @@ class ModelManager:
     def _ensure_assets(self) -> _Assets:
         if self._assets is None:
             cfg = self._load_config()
-            self._assets = _Assets(self._models_dir, cfg)
+            skip_lstm = self._active_mode == "lgbm_only"
+            self._assets = _Assets(self._models_dir, cfg, skip_lstm=skip_lstm)
         return self._assets
 
     # ── Discovery ──────────────────────────────────────────────────────────
@@ -212,26 +205,27 @@ class ModelManager:
         latest_row = values[-1:, :]
         lgbm_probs = assets.lgbm.predict_proba(latest_row)[0]   # shape (3,)
 
-        # ── LSTM (sequence of last seq_len rows) ───────────────────────────
-        scaled = assets.scaler.transform(values)
-        seq = scaled[-assets.seq_len:, :]
-        if len(seq) < assets.seq_len:
-            pad = np.zeros((assets.seq_len - len(seq), seq.shape[1]), dtype=np.float32)
-            seq = np.vstack([pad, seq])
-
-        tensor = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(assets.device)
-        with torch.no_grad():
-            logits = assets.lstm(tensor)
-            lstm_probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]   # shape (3,)
+        # ── LSTM (skipped in lgbm_only mode to save memory) ───────────────
+        lstm_probs = np.array([1/3, 1/3, 1/3], dtype=np.float32)  # fallback
+        if assets.lstm is not None:
+            scaled = assets.scaler.transform(values)
+            seq = scaled[-assets.seq_len:, :]
+            if len(seq) < assets.seq_len:
+                pad = np.zeros((assets.seq_len - len(seq), seq.shape[1]), dtype=np.float32)
+                seq = np.vstack([pad, seq])
+            tensor = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                logits = assets.lstm(tensor)
+                lstm_probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
 
         # ── Ensemble / mode selection ───────────────────────────────────────
-        if active_mode == "lgbm_only":
+        if active_mode == "lgbm_only" or assets.lstm is None:
             raw_probs = lgbm_probs
         elif active_mode == "lstm_only":
             raw_probs = lstm_probs
-        else:  # ensemble_v2 — stacking meta-learner
+        else:  # ensemble_v2
             meta_input = np.concatenate([lgbm_probs, lstm_probs]).reshape(1, -1)
-            raw_probs = assets.meta.predict_proba(meta_input)[0]   # shape (3,)
+            raw_probs = assets.meta.predict_proba(meta_input)[0]
 
         # ── Calibration ────────────────────────────────────────────────────
         try:
