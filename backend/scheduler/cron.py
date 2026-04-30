@@ -4,6 +4,7 @@ Pipeline: fetch OHLCV → engineer features → predict → save signal → Tele
 """
 
 import logging
+import traceback
 from datetime import datetime, timezone
 
 import ccxt.async_support as ccxt
@@ -75,18 +76,16 @@ async def fetch_futures_data(symbol: str) -> dict:
 async def run_inference_cycle():
     """Run inference for all configured coins and persist results."""
     logger.info("Starting inference cycle")
-    manager = ModelManager.get()
-
-    async with AsyncSessionLocal() as db:
-        for coin in settings.COINS:
-            try:
-                await _process_coin(db, manager, coin)
-            except NotImplementedError as e:
-                logger.error(f"Feature engineering error for {coin}: {e}")
-                break
-            except Exception as e:
-                logger.error(f"Error processing {coin}: {e}")
-
+    try:
+        manager = ModelManager.get()
+        async with AsyncSessionLocal() as db:
+            for coin in settings.COINS:
+                try:
+                    await _process_coin(db, manager, coin)
+                except Exception as e:
+                    logger.error(f"Error processing {coin}: {e}\n{traceback.format_exc()}")
+    except Exception as e:
+        logger.error(f"Inference cycle failed: {e}\n{traceback.format_exc()}")
     logger.info("Inference cycle complete")
 
 
