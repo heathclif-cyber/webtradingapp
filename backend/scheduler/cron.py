@@ -12,6 +12,7 @@ import pandas as pd
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from core.config import settings, LABEL_MAP
+from core.features import engineer_features
 from core.inference import ModelManager
 from core.scorer import compute_score
 from core.tp_sl_calculator import compute_tp_sl, risk_reward_ratio
@@ -29,24 +30,6 @@ _exchange = ccxt.binance({
 })
 
 
-# ── Feature Engineering stub ──────────────────────────────────────────────────
-# Replace with your actual 03_engineer.py logic or import it directly.
-
-def engineer_features(ohlcv_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Placeholder: apply the same 85-feature engineering from your training pipeline.
-    Import your actual engineer functions here and call them on ohlcv_df.
-    Returns a DataFrame where each row = one candle with all 85 features.
-    """
-    # TODO: replace with: from pipeline.engineer import build_features
-    # return build_features(ohlcv_df)
-    raise NotImplementedError(
-        "Plug in your 03_engineer.py feature engineering here. "
-        "The function must accept an OHLCV DataFrame and return a "
-        "DataFrame with all 85 feature columns."
-    )
-
-
 # ── Fetch helpers ─────────────────────────────────────────────────────────────
 
 async def fetch_ohlcv(symbol: str, timeframe: str = "1h", limit: int = 200) -> pd.DataFrame:
@@ -61,6 +44,32 @@ async def fetch_current_price(symbol: str) -> float:
     return float(ticker["last"])
 
 
+async def fetch_futures_data(symbol: str) -> dict:
+    """Fetch open interest, funding rate, long/short ratio from Binance futures."""
+    data = {"open_interest": 0.0, "funding_rate": 0.0, "long_short_ratio": 1.0}
+    try:
+        oi = await _exchange.fetch_open_interest(symbol)
+        data["open_interest"] = float(oi.get("openInterestAmount", 0) or 0)
+    except Exception:
+        pass
+    try:
+        fr = await _exchange.fetch_funding_rate(symbol)
+        data["funding_rate"] = float(fr.get("fundingRate", 0) or 0)
+    except Exception:
+        pass
+    try:
+        lsr = await _exchange.fapiPublicGetGlobalLongShortAccountRatio({
+            "symbol": symbol.replace("USDT", "") + "USDT",
+            "period": "1h",
+            "limit": 1,
+        })
+        if lsr:
+            data["long_short_ratio"] = float(lsr[0].get("longShortRatio", 1) or 1)
+    except Exception:
+        pass
+    return data
+
+
 # ── Core cycle ────────────────────────────────────────────────────────────────
 
 async def run_inference_cycle():
@@ -72,8 +81,8 @@ async def run_inference_cycle():
         for coin in settings.COINS:
             try:
                 await _process_coin(db, manager, coin)
-            except NotImplementedError:
-                logger.warning(f"Feature engineering not implemented — skipping {coin}")
+            except NotImplementedError as e:
+                logger.error(f"Feature engineering error for {coin}: {e}")
                 break
             except Exception as e:
                 logger.error(f"Error processing {coin}: {e}")
@@ -86,8 +95,13 @@ async def _process_coin(db, manager: ModelManager, coin: str):
     h4_df = await fetch_ohlcv(coin, "4h", limit=100)
     current_price = float(h1_df["close"].iloc[-1])
 
-    # Feature engineering (replace with real implementation)
-    features_df = engineer_features(h1_df)
+    futures = await fetch_futures_data(coin)
+    features_df = engineer_features(
+        h1_df, h4_df, symbol=coin,
+        open_interest=futures["open_interest"],
+        funding_rate=futures["funding_rate"],
+        long_short_ratio=futures["long_short_ratio"],
+    )
 
     # Predict
     pred = manager.predict(features_df)
