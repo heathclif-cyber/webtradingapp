@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     BINANCE_API_KEY: str = ""
     BINANCE_SECRET: str = ""
 
-    MODELS_DIR: str = "../models"
+    MODELS_DIR: str = "./models"
     # Mode: ensemble_v2 | lgbm_only | lstm_only
     ACTIVE_MODEL_VERSION: str = "ensemble_v2"
 
