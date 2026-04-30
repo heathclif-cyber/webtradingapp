@@ -21,10 +21,8 @@ monitor = BinanceMonitor()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_tables()
-    start_scheduler()
     await monitor.start()
     yield
-    stop_scheduler()
     await monitor.stop()
 
 
